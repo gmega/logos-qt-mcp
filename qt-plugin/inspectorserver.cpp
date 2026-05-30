@@ -25,6 +25,7 @@
 #include <QPointF>
 #include <QSizeF>
 #include <QFont>
+#include <QFileDialog>
 
 InspectorServer::InspectorServer(QObject *parent)
     : QObject(parent)
@@ -187,6 +188,10 @@ QJsonObject InspectorServer::handleCommand(const QJsonObject &request)
         result = cmdFindAndClick(params);
     else if (command == "listInteractive")
         result = cmdListInteractive(params);
+    else if (command == "listFileDialogs")
+        result = cmdListFileDialogs(params);
+    else if (command == "fileDialogAction")
+        result = cmdFileDialogAction(params);
     else
         result = errorResult(QString("Unknown command: %1").arg(command));
 
@@ -816,6 +821,41 @@ QJsonObject InspectorServer::cmdListInteractive(const QJsonObject &params)
     }
 
     return okResult({{"elements", results}, {"count", results.size()}});
+}
+
+QJsonObject InspectorServer::cmdListFileDialogs(const QJsonObject &params) {
+    QWidgetList widgets = QApplication::topLevelWidgets();
+    QJsonArray roots;
+    for (QWidget *widget : widgets) {
+        QString className = widget->metaObject()->className();
+        if (className == "QFileDialog") {
+            roots.append(serializeObject(widget, 1));
+        }
+    }
+    return okResult({{"dialogs", roots}});
+}
+
+QJsonObject InspectorServer::cmdFileDialogAction(const QJsonObject &params)
+{
+    QString objectId = params.value("objectId").toString();
+    QFileDialog *dialog = qobject_cast<QFileDialog*>(resolveObject(objectId));
+    if (!dialog) {
+        return errorResult("Object is not a file dialog: " + objectId);
+    }
+
+    QString action = params.value("action").toString();
+    if (action == "accept") {
+        // accept is protected, so we have to resort to this.
+        QMetaObject::invokeMethod(dialog, "accept");
+    } else if (action == "cancel") {
+        dialog->reject();
+    } else if (action == "select") {
+        dialog->selectFile(params.value("path").toString());
+    } else {
+        return errorResult("Unknown action: " + action);
+    }
+
+    return okResult();
 }
 
 // --- Serialization ---
