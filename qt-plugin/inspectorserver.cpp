@@ -863,6 +863,17 @@ QJsonObject InspectorServer::serializeObject(QObject *obj, int maxDepth, int cur
         result["opacity"] = item->opacity();
     }
 
+    // QDialog geometry.
+    QDialog *dialog = qobject_cast<QDialog*>(obj);
+    if (dialog) {
+        result["title"] = dialog->windowTitle();
+        result["visible"] = dialog->isVisible();
+        result["geometry"] = QJsonObject{
+            {"x", dialog->x()}, {"y", dialog->y()},
+            {"width", dialog->width()}, {"height", dialog->height()}
+        };
+    }
+
     // QQuickFileDialog geometry.
     // We need to resort to the metaobject protocol as QQuickDialog has no
     // public C++ API. This is, of course, brittle, and might break with
