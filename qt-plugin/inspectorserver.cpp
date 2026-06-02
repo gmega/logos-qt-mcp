@@ -811,12 +811,13 @@ QJsonObject InspectorServer::cmdFileDialogAction(const QJsonObject &params)
     } else if (action == "cancel") {
         QMetaObject::invokeMethod(dialog, "reject");
     } else if (action == "select") {
-        if (isQDialog)
+        if (isQDialog) {
             QMetaObject::invokeMethod(dialog, "selectFile",
                 Q_ARG(QString, params.value("path").toString()));
-        else
+        } else {
             dialog->setProperty("selectedFile",
                 QVariant(QUrl(params.value("path").toString())));
+        }
     } else {
         return errorResult("Unknown action: " + action);
     }
