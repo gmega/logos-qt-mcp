@@ -532,13 +532,20 @@ QJsonObject InspectorServer::cmdClick(const QJsonObject &params)
         target = child;
     }
 
-    QMouseEvent press(QEvent::MouseButtonPress, pos, globalPos,
-                      Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
-    QMouseEvent release(QEvent::MouseButtonRelease, pos, globalPos,
-                        Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    // Events for postEvent must be heap-allocated. Qt will
+    // take care of freeing them.
+    QMouseEvent *press = new QMouseEvent(
+        QEvent::MouseButtonPress, pos, globalPos,
+        Qt::LeftButton, Qt::LeftButton, Qt::NoModifier
+    );
 
-    QApplication::sendEvent(target, &press);
-    QApplication::sendEvent(target, &release);
+    QMouseEvent *release = new QMouseEvent(
+        QEvent::MouseButtonRelease, pos, globalPos,
+        Qt::LeftButton, Qt::NoButton, Qt::NoModifier
+    );
+
+    QApplication::postEvent(target, press);
+    QApplication::postEvent(target, release);
 
     return okResult({{"clicked", true}, {"x", x}, {"y", y},
                      {"widget", QString::fromUtf8(target->metaObject()->className())}});
