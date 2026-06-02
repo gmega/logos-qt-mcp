@@ -385,57 +385,8 @@ QJsonObject InspectorServer::cmdFindByType(const QJsonObject &params)
     if (!m_rootWidget)
         return errorResult("No root widget");
 
-    // Collect all objects and filter by type
-    QJsonArray results;
-    QList<QObject*> stack;
-    stack.append(m_rootWidget.data());
-
-    while (!stack.isEmpty()) {
-        QObject *obj = stack.takeFirst();
-        if (!obj) continue;
-
-        QString className = QString::fromUtf8(obj->metaObject()->className());
-        // Match exact class name or suffix (e.g., "Button" matches "QQuickButton")
-        if (className == typeName || className.endsWith(typeName)) {
-            QString id = registerObject(obj);
-            QJsonObject entry;
-            entry["id"] = id;
-            entry["type"] = className;
-            entry["objectName"] = obj->objectName();
-
-            QWidget *w = qobject_cast<QWidget*>(obj);
-            if (w) {
-                entry["geometry"] = QJsonObject{
-                    {"x", w->x()}, {"y", w->y()},
-                    {"width", w->width()}, {"height", w->height()}
-                };
-            }
-            QQuickItem *item = qobject_cast<QQuickItem*>(obj);
-            if (item) {
-                entry["geometry"] = QJsonObject{
-                    {"x", item->x()}, {"y", item->y()},
-                    {"width", item->width()}, {"height", item->height()}
-                };
-            }
-            results.append(entry);
-        }
-
-        // Traverse children
-        QQuickItem *item = qobject_cast<QQuickItem*>(obj);
-        if (item) {
-            for (auto *child : item->childItems())
-                stack.append(child);
-        }
-        // Also check QQuickWidget rootObject
-        QQuickWidget *qw = qobject_cast<QQuickWidget*>(obj);
-        if (qw && qw->rootObject()) {
-            stack.append(qw->rootObject());
-        }
-        for (auto *child : obj->children())
-            stack.append(child);
-    }
-
-    return okResult({{"matches", results}, {"count", results.size()}});
+    QJsonArray matches = findByType(typeName, m_rootWidget.data());
+    return okResult({{"matches", matches}, {"count", matches.size()}});
 }
 
 QJsonObject InspectorServer::cmdFindByProperty(const QJsonObject &params)
@@ -824,33 +775,48 @@ QJsonObject InspectorServer::cmdListInteractive(const QJsonObject &params)
 }
 
 QJsonObject InspectorServer::cmdListFileDialogs(const QJsonObject &params) {
+    // There are many more dialog types, but we start with those to make
+    // life simpler.
+    static const QStringList fileDialogTypes = {
+        "QFileDialog", "QQuickFileDialog"
+    };
+
     QWidgetList widgets = QApplication::topLevelWidgets();
-    QJsonArray roots;
-    for (QWidget *widget : widgets) {
-        QString className = widget->metaObject()->className();
-        if (className == "QFileDialog") {
-            roots.append(serializeObject(widget, 1));
+    QJsonArray dialogs;
+    for (QString dialogType : fileDialogTypes) {
+        for (QWidget *rootWidget : widgets) {
+            for(auto item : findByType(dialogType, rootWidget)) {
+                dialogs.append(item);
+            }
         }
     }
-    return okResult({{"dialogs", roots}});
+    return okResult({{"dialogs", dialogs}});
 }
 
 QJsonObject InspectorServer::cmdFileDialogAction(const QJsonObject &params)
 {
     QString objectId = params.value("objectId").toString();
-    QFileDialog *dialog = qobject_cast<QFileDialog*>(resolveObject(objectId));
-    if (!dialog) {
+    QObject *dialog = resolveObject(objectId);
+    if (!dialog)
+        return errorResult("Object not found: " + objectId);
+
+    bool isQDialog = dialog->inherits("QDialog");
+    if (!(isQDialog || dialog->inherits("QQuickAbstractDialog"))) {
         return errorResult("Object is not a file dialog: " + objectId);
     }
 
     QString action = params.value("action").toString();
     if (action == "accept") {
-        // accept is protected, so we have to resort to this.
         QMetaObject::invokeMethod(dialog, "accept");
     } else if (action == "cancel") {
-        dialog->reject();
+        QMetaObject::invokeMethod(dialog, "reject");
     } else if (action == "select") {
-        dialog->selectFile(params.value("path").toString());
+        if (isQDialog)
+            QMetaObject::invokeMethod(dialog, "selectFile",
+                Q_ARG(QString, params.value("path").toString()));
+        else
+            dialog->setProperty("selectedFile",
+                QVariant(QUrl(params.value("path").toString())));
     } else {
         return errorResult("Unknown action: " + action);
     }
@@ -892,6 +858,17 @@ QJsonObject InspectorServer::serializeObject(QObject *obj, int maxDepth, int cur
             {"width", item->width()}, {"height", item->height()}
         };
         result["opacity"] = item->opacity();
+    }
+
+    // QQuickFileDialog geometry.
+    // We need to resort to the metaobject protocol as QQuickDialog has no
+    // public C++ API. This is, of course, brittle, and might break with
+    // future versions maintenance releases of Qt.
+    if (obj->inherits("QQuickAbstractDialog")) {
+        result["title"] = obj->property("title").toString();
+        result["visible"] = obj->property("visible").toBool();
+        // Geometry is painful cause QML uses its own "real" type (I don't even
+        // know if the coordinate system is the same as the rest) so TODO. :-)
     }
 
     // Include common identifying properties in tree nodes
@@ -1142,4 +1119,43 @@ QJsonObject InspectorServer::okResult(const QJsonObject &data)
     QJsonObject result = data;
     result["ok"] = true;
     return result;
+}
+
+QJsonArray InspectorServer::findByType(const QString &typeName, QWidget *root)
+{
+    // Collect all objects and filter by type
+    QJsonArray results;
+    QSet<QObject*> visited;
+    QList<QObject*> stack;
+    stack.append(root);
+
+    while (!stack.isEmpty()) {
+        QObject *obj = stack.takeFirst();
+        if (!obj) continue;
+
+        // Don't process the same vertex more than once.
+        if (visited.contains(obj)) continue;
+        visited.insert(obj);
+
+        QString className = QString::fromUtf8(obj->metaObject()->className());
+        // Match exact class name or a part of it (e.g., "Button" matches "QQuickButton" or
+        // "Button_QML_TYPE_XX")
+        if (className == typeName || className.contains(typeName)) {
+            QString id = registerObject(obj);
+            results.append(serializeObject(obj, 0, 0));
+        }
+
+        QQuickItem *item = qobject_cast<QQuickItem*>(obj);
+        if (item) {
+            for (auto *child : item->childItems())
+                stack.append(child);
+        }
+        QQuickWidget *qw = qobject_cast<QQuickWidget*>(obj);
+        if (qw && qw->rootObject())
+            stack.append(qw->rootObject());
+        for (auto *child : obj->children())
+            stack.append(child);
+    }
+
+    return results;
 }
