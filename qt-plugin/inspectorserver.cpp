@@ -801,10 +801,12 @@ QJsonObject InspectorServer::cmdFileDialogAction(const QJsonObject &params)
         return errorResult("Object not found: " + objectId);
 
     bool isQDialog = dialog->inherits("QDialog");
-    if (!(isQDialog || dialog->inherits("QQuickAbstractDialog"))) {
+    if (!(isQDialog || dialog->inherits("QQuickFileDialog"))) {
         return errorResult("Object is not a file dialog: " + objectId);
     }
 
+    // Since QQuickFileDialog requires that anyway,
+    // just use invokeMethod all over for simplicity.
     QString action = params.value("action").toString();
     if (action == "accept") {
         QMetaObject::invokeMethod(dialog, "accept");
@@ -864,12 +866,12 @@ QJsonObject InspectorServer::serializeObject(QObject *obj, int maxDepth, int cur
     // QQuickFileDialog geometry.
     // We need to resort to the metaobject protocol as QQuickDialog has no
     // public C++ API. This is, of course, brittle, and might break with
-    // future versions maintenance releases of Qt.
+    // (minor) future versions releases of Qt.
     if (obj->inherits("QQuickAbstractDialog")) {
         result["title"] = obj->property("title").toString();
         result["visible"] = obj->property("visible").toBool();
-        // Geometry is painful cause QML uses its own "real" type (I don't even
-        // know if the coordinate system is the same as the rest) so TODO. :-)
+        // Geometry is painful cause QML uses its own "real" type - I don't even
+        // know if the coordinate system is the same as the rest - so TODO. :-)
     }
 
     // Include common identifying properties in tree nodes
@@ -1134,7 +1136,9 @@ QJsonArray InspectorServer::findByType(const QString &typeName, QWidget *root)
         QObject *obj = stack.takeFirst();
         if (!obj) continue;
 
-        // Don't process the same vertex more than once.
+        // Since we're merging the scene and object trees, this is a
+        // BFS on an arbitrary graph (could even contain cycles!).
+        // Mark visited vertices to avoid problems.
         if (visited.contains(obj)) continue;
         visited.insert(obj);
 
