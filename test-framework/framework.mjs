@@ -65,7 +65,9 @@ export class Inspector {
         const msg = JSON.parse(line);
         const p = this.pending.get(String(msg.id));
         if (p) { clearTimeout(p.timer); this.pending.delete(String(msg.id)); p.resolve(msg); }
-      } catch {}
+      } catch {
+        console.error("Error processing reply message:", line);
+      }
     }
   }
 
@@ -113,6 +115,20 @@ export class App {
   /** List all interactive elements. */
   async listInteractive() {
     return this.inspector.send("listInteractive", {});
+  }
+
+  /** List all file dialogs. */
+  async listFileDialogs() {
+    return this.inspector.send("listFileDialogs", {});
+  }
+
+  /** Interact with an existing dialog. */
+  async fileDialogAction(objectId, action, path = undefined) {
+    var params = { objectId, action };
+    if (path !== undefined) {
+      params.path = path;
+    }
+    return this.inspector.send("fileDialogAction", params);
   }
 
   /** Find elements by property value. */

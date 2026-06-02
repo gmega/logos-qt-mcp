@@ -796,12 +796,12 @@ QJsonObject InspectorServer::cmdListFileDialogs(const QJsonObject &params) {
 QJsonObject InspectorServer::cmdFileDialogAction(const QJsonObject &params)
 {
     QString objectId = params.value("objectId").toString();
-    QObject *dialog = resolveObject(objectId);
-    if (!dialog)
+    QObject *obj = resolveObject(objectId);
+    if (!obj)
         return errorResult("Object not found: " + objectId);
 
-    bool isQDialog = dialog->inherits("QDialog");
-    if (!(isQDialog || dialog->inherits("QQuickFileDialog"))) {
+    QFileDialog *fDialog = qobject_cast<QFileDialog*>(obj);
+    if (!fDialog && !obj->inherits("QQuickFileDialog")) {
         return errorResult("Object is not a file dialog: " + objectId);
     }
 
@@ -809,15 +809,14 @@ QJsonObject InspectorServer::cmdFileDialogAction(const QJsonObject &params)
     // just use invokeMethod all over for simplicity.
     QString action = params.value("action").toString();
     if (action == "accept") {
-        QMetaObject::invokeMethod(dialog, "accept");
+        QMetaObject::invokeMethod(obj, "accept");
     } else if (action == "cancel") {
-        QMetaObject::invokeMethod(dialog, "reject");
+        QMetaObject::invokeMethod(obj, "reject");
     } else if (action == "select") {
-        if (isQDialog) {
-            QMetaObject::invokeMethod(dialog, "selectFile",
-                Q_ARG(QString, params.value("path").toString()));
+        if (fDialog) {
+            fDialog->selectFile(params.value("path").toString());
         } else {
-            dialog->setProperty("selectedFile",
+            obj->setProperty("selectedFile",
                 QVariant(QUrl(params.value("path").toString())));
         }
     } else {
@@ -878,6 +877,8 @@ QJsonObject InspectorServer::serializeObject(QObject *obj, int maxDepth, int cur
     // We need to resort to the metaobject protocol as QQuickDialog has no
     // public C++ API. This is, of course, brittle, and might break with
     // (minor) future versions releases of Qt.
+    // FIXME: this is getting pretty long, probably worth it to dismember this
+    //   into type-specific and keep the main traversal logic clean.
     if (obj->inherits("QQuickAbstractDialog")) {
         result["title"] = obj->property("title").toString();
         result["visible"] = obj->property("visible").toBool();
