@@ -1146,7 +1146,6 @@ QJsonArray InspectorServer::findByType(const QString &typeName, QWidget *root)
         // Match exact class name or a part of it (e.g., "Button" matches "QQuickButton" or
         // "Button_QML_TYPE_XX")
         if (className == typeName || className.contains(typeName)) {
-            QString id = registerObject(obj);
             results.append(serializeObject(obj, 0, 0));
         }
 
