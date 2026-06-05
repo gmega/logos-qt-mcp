@@ -823,8 +823,9 @@ QJsonObject InspectorServer::cmdFileDialogAction(const QJsonObject &params)
         if (fDialog) {
             fDialog->selectFile(params.value("path").toString());
         } else {
-            obj->setProperty("selectedFile",
-                QVariant(QUrl(params.value("path").toString())));
+            if (!obj->setProperty("selectedFile", QUrl(params.value("path").toString()))) {
+                qWarning() << "Failed to set selectedFile property on" << objectId;
+            }
         }
     } else {
         return errorResult("Unknown action: " + action);
