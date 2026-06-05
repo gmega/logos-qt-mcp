@@ -676,30 +676,45 @@ QJsonObject InspectorServer::cmdFindAndClick(const QJsonObject &params)
         return errorResult("No root widget");
 
     QList<QObject*> stack;
+    QSet<QObject*> visited;
     stack.append(m_rootWidget.data());
-
-    QObject *match = nullptr;
+    QJsonObject clickResult;
 
     while (!stack.isEmpty()) {
         QObject *obj = stack.takeFirst();
         if (!obj) continue;
 
-        if (!match) {
-            QVariant textVal = obj->property("text");
-            if (textVal.isValid()) {
-                QString text = textVal.toString();
-                bool textMatches = exact ? (text == searchText)
-                                         : text.contains(searchText, Qt::CaseInsensitive);
-                if (textMatches) {
-                    bool typeMatches = true;
-                    if (!filterType.isEmpty()) {
-                        QString className = QString::fromUtf8(obj->metaObject()->className());
-                        typeMatches = (className == filterType || className.endsWith(filterType));
-                    }
-                    if (typeMatches)
-                        match = obj;
-                }
+        if (visited.contains(obj)) continue;
+        visited.insert(obj);
+
+        QVariant textVal = obj->property("text");
+        if (textVal.isValid()) {
+            QString text = textVal.toString();
+            bool textMatches = exact ? (text == searchText)
+                                        : text.contains(searchText, Qt::CaseInsensitive);
+            if (!textMatches)
+                continue;
+
+            bool typeMatches = true;
+            if (!filterType.isEmpty()) {
+                QString className = QString::fromUtf8(obj->metaObject()->className());
+                typeMatches = (className == filterType || className.endsWith(filterType));
             }
+
+            if (!typeMatches)
+                continue;
+
+            QString objectId = registerObject(obj);
+            clickResult = cmdClick(QJsonObject{{"objectId", objectId}});
+            if (isError(clickResult)) {
+                // It might happen that there are multiple matching objects, but only
+                // some of those are clickable. Continues.
+                continue;
+            }
+            clickResult["matchedText"] = obj->property("text").toString();
+            clickResult["matchedType"] = QString::fromUtf8(obj->metaObject()->className());
+            clickResult["matchedId"] = objectId;
+            break;
         }
 
         // Traverse children
@@ -715,18 +730,8 @@ QJsonObject InspectorServer::cmdFindAndClick(const QJsonObject &params)
             stack.append(child);
     }
 
-    if (!match)
-        return errorResult(QString("No element found with text '%1'").arg(searchText));
-
-    // Click the found element by delegating to cmdClick
-    QString id = registerObject(match);
-    QJsonObject clickParams;
-    clickParams["objectId"] = id;
-    QJsonObject clickResult = cmdClick(clickParams);
-
-    clickResult["matchedText"] = match->property("text").toString();
-    clickResult["matchedType"] = QString::fromUtf8(match->metaObject()->className());
-    clickResult["matchedId"] = id;
+    if (!isOk(clickResult))
+        return errorResult(QString("No clickable element found with text '%1'").arg(searchText));
 
     return clickResult;
 }
@@ -1090,6 +1095,16 @@ QWidget* InspectorServer::findWidgetAt(int x, int y)
     if (!m_rootWidget) return nullptr;
     QWidget *child = m_rootWidget->childAt(x, y);
     return child ? child : m_rootWidget.data();
+}
+
+bool InspectorServer::isError(const QJsonObject &obj)
+{
+    return obj.contains("error");
+}
+
+bool InspectorServer::isOk(const QJsonObject &obj)
+{
+    return obj.contains("ok");
 }
 
 QJsonObject InspectorServer::errorResult(const QString &msg)
