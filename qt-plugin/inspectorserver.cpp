@@ -742,16 +742,23 @@ QJsonObject InspectorServer::cmdListInteractive(const QJsonObject &params)
     static const QStringList interactiveTypes = {
         "Button", "Delegate", "TextField", "TextInput", "TextEdit",
         "ComboBox", "Slider", "Switch", "CheckBox", "RadioButton",
-        "SpinBox", "TabButton", "MenuItem"
+        "SpinBox", "TabButton", "MenuItem", "MouseArea"
     };
 
     QJsonArray results;
     QList<QObject*> stack;
+    QSet<QObject*> visited;
     stack.append(m_rootWidget.data());
 
     while (!stack.isEmpty()) {
         QObject *obj = stack.takeFirst();
         if (!obj) continue;
+
+        // Since we're merging the scene and object trees, this is a
+        // BFS on an arbitrary graph (could even contain cycles!).
+        // Mark visited vertices to avoid problems.
+        if (visited.contains(obj)) continue;
+        visited.insert(obj);
 
         QString className = QString::fromUtf8(obj->metaObject()->className());
 
