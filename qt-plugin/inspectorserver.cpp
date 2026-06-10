@@ -3,6 +3,7 @@
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QJsonDocument>
+#include <QSet>
 #include <QWidget>
 #include <QQuickItem>
 #include <QQuickWidget>
@@ -383,7 +384,15 @@ QJsonObject InspectorServer::cmdFindByType(const QJsonObject &params)
     // Collect all objects and filter by type
     QJsonArray results;
     QList<QObject*> stack;
-    stack.append(m_rootWidget.data());
+    // cost proportional to tree size, not parent-chain multiplicity.
+    QSet<QObject*> visited;
+    auto enqueue = [&](QObject *o) {
+        if (o && !visited.contains(o)) {
+            visited.insert(o);
+            stack.append(o);
+        }
+    };
+    enqueue(m_rootWidget.data());
 
     while (!stack.isEmpty()) {
         QObject *obj = stack.takeFirst();
@@ -419,15 +428,15 @@ QJsonObject InspectorServer::cmdFindByType(const QJsonObject &params)
         QQuickItem *item = qobject_cast<QQuickItem*>(obj);
         if (item) {
             for (auto *child : item->childItems())
-                stack.append(child);
+                enqueue(child);
         }
         // Also check QQuickWidget rootObject
         QQuickWidget *qw = qobject_cast<QQuickWidget*>(obj);
         if (qw && qw->rootObject()) {
-            stack.append(qw->rootObject());
+            enqueue(qw->rootObject());
         }
         for (auto *child : obj->children())
-            stack.append(child);
+            enqueue(child);
     }
 
     return okResult({{"matches", results}, {"count", results.size()}});
@@ -447,7 +456,14 @@ QJsonObject InspectorServer::cmdFindByProperty(const QJsonObject &params)
 
     QJsonArray results;
     QList<QObject*> stack;
-    stack.append(m_rootWidget.data());
+    QSet<QObject*> visited;
+    auto enqueue = [&](QObject *o) {
+        if (o && !visited.contains(o)) {
+            visited.insert(o);
+            stack.append(o);
+        }
+    };
+    enqueue(m_rootWidget.data());
 
     while (!stack.isEmpty()) {
         QObject *obj = stack.takeFirst();
@@ -478,13 +494,13 @@ QJsonObject InspectorServer::cmdFindByProperty(const QJsonObject &params)
         QQuickItem *item = qobject_cast<QQuickItem*>(obj);
         if (item) {
             for (auto *child : item->childItems())
-                stack.append(child);
+                enqueue(child);
         }
         QQuickWidget *qw = qobject_cast<QQuickWidget*>(obj);
         if (qw && qw->rootObject())
-            stack.append(qw->rootObject());
+            enqueue(qw->rootObject());
         for (auto *child : obj->children())
-            stack.append(child);
+            enqueue(child);
     }
 
     return okResult({{"matches", results}, {"count", results.size()}});
@@ -676,7 +692,14 @@ QJsonObject InspectorServer::cmdFindAndClick(const QJsonObject &params)
         return errorResult("No root widget");
 
     QList<QObject*> stack;
-    stack.append(m_rootWidget.data());
+    QSet<QObject*> visited;
+    auto enqueue = [&](QObject *o) {
+        if (o && !visited.contains(o)) {
+            visited.insert(o);
+            stack.append(o);
+        }
+    };
+    enqueue(m_rootWidget.data());
 
     QObject *match = nullptr;
 
@@ -694,7 +717,7 @@ QJsonObject InspectorServer::cmdFindAndClick(const QJsonObject &params)
                     bool typeMatches = true;
                     if (!filterType.isEmpty()) {
                         QString className = QString::fromUtf8(obj->metaObject()->className());
-                        typeMatches = (className == filterType || className.endsWith(filterType));
+                        typeMatches = (className == filterType || className.contains(filterType));
                     }
                     if (typeMatches)
                         match = obj;
@@ -706,13 +729,13 @@ QJsonObject InspectorServer::cmdFindAndClick(const QJsonObject &params)
         QQuickItem *item = qobject_cast<QQuickItem*>(obj);
         if (item) {
             for (auto *child : item->childItems())
-                stack.append(child);
+                enqueue(child);
         }
         QQuickWidget *qw = qobject_cast<QQuickWidget*>(obj);
         if (qw && qw->rootObject())
-            stack.append(qw->rootObject());
+            enqueue(qw->rootObject());
         for (auto *child : obj->children())
-            stack.append(child);
+            enqueue(child);
     }
 
     if (!match)
@@ -747,7 +770,14 @@ QJsonObject InspectorServer::cmdListInteractive(const QJsonObject &params)
 
     QJsonArray results;
     QList<QObject*> stack;
-    stack.append(m_rootWidget.data());
+    QSet<QObject*> visited;
+    auto enqueue = [&](QObject *o) {
+        if (o && !visited.contains(o)) {
+            visited.insert(o);
+            stack.append(o);
+        }
+    };
+    enqueue(m_rootWidget.data());
 
     while (!stack.isEmpty()) {
         QObject *obj = stack.takeFirst();
@@ -806,13 +836,13 @@ QJsonObject InspectorServer::cmdListInteractive(const QJsonObject &params)
         QQuickItem *item = qobject_cast<QQuickItem*>(obj);
         if (item) {
             for (auto *child : item->childItems())
-                stack.append(child);
+                enqueue(child);
         }
         QQuickWidget *qw = qobject_cast<QQuickWidget*>(obj);
         if (qw && qw->rootObject())
-            stack.append(qw->rootObject());
+            enqueue(qw->rootObject());
         for (auto *child : obj->children())
-            stack.append(child);
+            enqueue(child);
     }
 
     return okResult({{"elements", results}, {"count", results.size()}});
