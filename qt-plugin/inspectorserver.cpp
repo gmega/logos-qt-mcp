@@ -662,32 +662,31 @@ QJsonObject InspectorServer::cmdFindAndClick(const QJsonObject &params)
         if (!obj) continue;
 
         QVariant textVal = obj->property("text");
-        if (textVal.isValid()) {
-            QString text = textVal.toString();
-            bool textMatches = exact ? (text == searchText)
-                                        : text.contains(searchText, Qt::CaseInsensitive);
-            if (!textMatches)
-                continue;
+        if (!textVal.isValid())
+            continue;
 
-            bool typeMatches = true;
-            if (!filterType.isEmpty()) {
-                QString className = QString::fromUtf8(obj->metaObject()->className());
-                typeMatches = (className == filterType || className.endsWith(filterType));
-            }
+        QString text = textVal.toString();
+        bool textMatches = exact ? (text == searchText)
+                                    : text.contains(searchText, Qt::CaseInsensitive);
+        if (!textMatches)
+            continue;
 
-            if (!typeMatches)
-                continue;
+        bool typeMatches = true;
+        if (!filterType.isEmpty()) {
+            QString className = QString::fromUtf8(obj->metaObject()->className());
+            typeMatches = (className == filterType || className.endsWith(filterType));
+        }
 
-            QString objectId = registerObject(obj);
-            clickResult = cmdClick(QJsonObject{{"objectId", objectId}});
-            if (isOk(clickResult)) {
-                clickResult["matchedText"] = obj->property("text").toString();
-                clickResult["matchedType"] = QString::fromUtf8(obj->metaObject()->className());
-                clickResult["matchedId"] = objectId;
-                break;
-            }
-            // If we got this far, means we found a matching object, but it wasn't clickable.
-            // Continues.
+        if (!typeMatches)
+            continue;
+
+        QString objectId = registerObject(obj);
+        clickResult = cmdClick(QJsonObject{{"objectId", objectId}});
+        if (isOk(clickResult)) {
+            clickResult["matchedText"] = obj->property("text").toString();
+            clickResult["matchedType"] = QString::fromUtf8(obj->metaObject()->className());
+            clickResult["matchedId"] = objectId;
+            break;
         }
 
         // Traverse children
