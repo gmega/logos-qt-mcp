@@ -225,7 +225,7 @@ async function waitForInspector(maxRetries = 30, intervalMs = 500) {
   throw new Error(`Inspector not available at ${HOST}:${PORT} after ${maxRetries * intervalMs}ms`);
 }
 
-function launchApp(appBin, verbose = false) {
+function launchOffscreen(appBin, verbose = false) {
   if (verbose) console.log(`Launching: ${appBin} -platform offscreen`);
   const child = spawn(appBin, ["-platform", "offscreen"], {
     stdio: ["ignore", "pipe", "pipe"],
@@ -236,9 +236,37 @@ function launchApp(appBin, verbose = false) {
     },
   });
 
+  return child;
+}
+
+function launchXvfb(appBin, verbose = false) {
+  if (verbose) console.log(`Launching: ${appBin} with Xvfb`);
+
+  const child = spawn(
+    "xvfb-run",
+    ["-a", appBin],
+    {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        QT_QPA_PLATFORM: "xcb",
+        QT_FORCE_STDERR_LOGGING: "1",
+      },
+    }
+  );
+
+  return child;
+}
+
+function launchApp(launchFn, appBin, verbose = false) {
+  const child = launchFn(appBin, verbose);
+
   if (verbose) {
     child.stdout.on("data", (d) => process.stderr.write(`[app:out] ${d}`));
     child.stderr.on("data", (d) => process.stderr.write(`[app:err] ${d}`));
+  } else {
+    child.stdout.resume();
+    child.stderr.resume();
   }
 
   child.on("exit", (code) => {
@@ -322,19 +350,20 @@ export async function run() {
   const verbose = rawArgs.includes("--verbose") || rawArgs.includes("-v");
 
   // Strip flags to get positional args
-  const args = rawArgs.filter(a => a !== "--verbose" && a !== "-v" && a !== "--ci");
+  const args = rawArgs.filter(a => a !== "--verbose" && a !== "-v" && a !== "--ci" && a !== "--xvfb");
   const isCI = rawArgs.includes("--ci");
 
   if (isCI) {
     // CI mode: --ci <app-binary> [filter]
     const appBin = args[0];
     if (!appBin) {
-      console.error("Usage: node <test-file> --ci <app-binary> [filter] [--verbose]");
+      console.error("Usage: node <test-file> --ci <app-binary> [filter] [--verbose] [--xvfb]");
       process.exit(1);
     }
     const filter = args[1] || "";
+    const useXvfb = rawArgs.includes("--xvfb");
 
-    const appProcess = launchApp(appBin, verbose);
+    const appProcess = launchApp(useXvfb ? launchXvfb : launchOffscreen, appBin, verbose);
 
     if (verbose) console.log("Waiting for inspector to become available...");
     try {
@@ -349,12 +378,12 @@ export async function run() {
     // Give the app a moment to fully initialize plugins
     await new Promise((r) => setTimeout(r, 2000));
 
-    const mode = "offscreen"; // --ci always uses offscreen
+    const mode = useXvfb ? "xcb" : "offscreen";
     await runTests(filter, appProcess, { mode });
   } else {
     // Normal mode: app must already be running
     const filter = args[0] || "";
-    const mode = process.env.QT_QPA_PLATFORM === "offscreen" ? "offscreen" : "normal";
+    const mode = process.env.QT_QPA_PLATFORM || "normal";
     await runTests(filter, null, { mode });
   }
 }
