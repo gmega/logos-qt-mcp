@@ -720,7 +720,7 @@ QJsonObject InspectorServer::cmdListInteractive(const QJsonObject &params)
     static const QStringList interactiveTypes = {
         "Button", "Delegate", "TextField", "TextInput", "TextEdit",
         "ComboBox", "Slider", "Switch", "CheckBox", "RadioButton",
-        "SpinBox", "TabButton", "MenuItem"
+        "SpinBox", "TabButton", "MenuItem", "MouseArea"
     };
 
     QJsonArray results;
