@@ -673,21 +673,21 @@ QJsonObject InspectorServer::cmdFindAndClick(const QJsonObject &params)
             if (!filterType.isEmpty()) {
                 QString className = QString::fromUtf8(obj->metaObject()->className());
                 typeMatches = (className == filterType || className.endsWith(filterType));
+            }
 
             if (!typeMatches)
                 continue;
 
             QString objectId = registerObject(obj);
             clickResult = cmdClick(QJsonObject{{"objectId", objectId}});
-            if (isError(clickResult)) {
-                // It might happen that there are multiple matching objects, but only
-                // some of those are clickable. Continues.
-                continue;
+            if (isOk(clickResult)) {
+                clickResult["matchedText"] = obj->property("text").toString();
+                clickResult["matchedType"] = QString::fromUtf8(obj->metaObject()->className());
+                clickResult["matchedId"] = objectId;
+                break;
             }
-            clickResult["matchedText"] = obj->property("text").toString();
-            clickResult["matchedType"] = QString::fromUtf8(obj->metaObject()->className());
-            clickResult["matchedId"] = objectId;
-            break;
+            // If we got this far, means we found a matching object, but it wasn't clickable.
+            // Continues.
         }
 
         // Traverse children
