@@ -248,6 +248,9 @@ function launchApp(launchFn, appBin, verbose = false) {
   if (verbose) {
     child.stdout.on("data", (d) => process.stderr.write(`[app:out] ${d}`));
     child.stderr.on("data", (d) => process.stderr.write(`[app:err] ${d}`));
+  } else {
+    child.stdout.resume();
+    child.stderr.resume();
   }
 
   child.on("exit", (code) => {
