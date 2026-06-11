@@ -3,6 +3,7 @@
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QJsonDocument>
+#include <QSet>
 #include <QWidget>
 #include <QQuickItem>
 #include <QQuickWidget>
@@ -25,6 +26,7 @@
 #include <QPointF>
 #include <QSizeF>
 #include <QFont>
+#include <QFileDialog>
 
 InspectorServer::InspectorServer(QObject *parent)
     : QObject(parent)
@@ -187,6 +189,10 @@ QJsonObject InspectorServer::handleCommand(const QJsonObject &request)
         result = cmdFindAndClick(params);
     else if (command == "listInteractive")
         result = cmdListInteractive(params);
+    else if (command == "listFileDialogs")
+        result = cmdListFileDialogs(params);
+    else if (command == "fileDialogAction")
+        result = cmdFileDialogAction(params);
     else
         result = errorResult(QString("Unknown command: %1").arg(command));
 
@@ -380,57 +386,8 @@ QJsonObject InspectorServer::cmdFindByType(const QJsonObject &params)
     if (!m_rootWidget)
         return errorResult("No root widget");
 
-    // Collect all objects and filter by type
-    QJsonArray results;
-    QList<QObject*> stack;
-    stack.append(m_rootWidget.data());
-
-    while (!stack.isEmpty()) {
-        QObject *obj = stack.takeFirst();
-        if (!obj) continue;
-
-        QString className = QString::fromUtf8(obj->metaObject()->className());
-        // Match exact class name or suffix (e.g., "Button" matches "QQuickButton")
-        if (className == typeName || className.endsWith(typeName)) {
-            QString id = registerObject(obj);
-            QJsonObject entry;
-            entry["id"] = id;
-            entry["type"] = className;
-            entry["objectName"] = obj->objectName();
-
-            QWidget *w = qobject_cast<QWidget*>(obj);
-            if (w) {
-                entry["geometry"] = QJsonObject{
-                    {"x", w->x()}, {"y", w->y()},
-                    {"width", w->width()}, {"height", w->height()}
-                };
-            }
-            QQuickItem *item = qobject_cast<QQuickItem*>(obj);
-            if (item) {
-                entry["geometry"] = QJsonObject{
-                    {"x", item->x()}, {"y", item->y()},
-                    {"width", item->width()}, {"height", item->height()}
-                };
-            }
-            results.append(entry);
-        }
-
-        // Traverse children
-        QQuickItem *item = qobject_cast<QQuickItem*>(obj);
-        if (item) {
-            for (auto *child : item->childItems())
-                stack.append(child);
-        }
-        // Also check QQuickWidget rootObject
-        QQuickWidget *qw = qobject_cast<QQuickWidget*>(obj);
-        if (qw && qw->rootObject()) {
-            stack.append(qw->rootObject());
-        }
-        for (auto *child : obj->children())
-            stack.append(child);
-    }
-
-    return okResult({{"matches", results}, {"count", results.size()}});
+    QJsonArray matches = findByType(typeName, m_rootWidget.data());
+    return okResult({{"matches", matches}, {"count", matches.size()}});
 }
 
 QJsonObject InspectorServer::cmdFindByProperty(const QJsonObject &params)
@@ -447,7 +404,14 @@ QJsonObject InspectorServer::cmdFindByProperty(const QJsonObject &params)
 
     QJsonArray results;
     QList<QObject*> stack;
-    stack.append(m_rootWidget.data());
+    QSet<QObject*> visited;
+    auto enqueue = [&](QObject *o) {
+        if (o && !visited.contains(o)) {
+            visited.insert(o);
+            stack.append(o);
+        }
+    };
+    enqueue(m_rootWidget.data());
 
     while (!stack.isEmpty()) {
         QObject *obj = stack.takeFirst();
@@ -478,13 +442,13 @@ QJsonObject InspectorServer::cmdFindByProperty(const QJsonObject &params)
         QQuickItem *item = qobject_cast<QQuickItem*>(obj);
         if (item) {
             for (auto *child : item->childItems())
-                stack.append(child);
+                enqueue(child);
         }
         QQuickWidget *qw = qobject_cast<QQuickWidget*>(obj);
         if (qw && qw->rootObject())
-            stack.append(qw->rootObject());
+            enqueue(qw->rootObject());
         for (auto *child : obj->children())
-            stack.append(child);
+            enqueue(child);
     }
 
     return okResult({{"matches", results}, {"count", results.size()}});
@@ -576,13 +540,20 @@ QJsonObject InspectorServer::cmdClick(const QJsonObject &params)
         target = child;
     }
 
-    QMouseEvent press(QEvent::MouseButtonPress, pos, globalPos,
-                      Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
-    QMouseEvent release(QEvent::MouseButtonRelease, pos, globalPos,
-                        Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    // Events for postEvent must be heap-allocated. Qt will
+    // take care of freeing them.
+    QMouseEvent *press = new QMouseEvent(
+        QEvent::MouseButtonPress, pos, globalPos,
+        Qt::LeftButton, Qt::LeftButton, Qt::NoModifier
+    );
 
-    QApplication::sendEvent(target, &press);
-    QApplication::sendEvent(target, &release);
+    QMouseEvent *release = new QMouseEvent(
+        QEvent::MouseButtonRelease, pos, globalPos,
+        Qt::LeftButton, Qt::NoButton, Qt::NoModifier
+    );
+
+    QApplication::postEvent(target, press);
+    QApplication::postEvent(target, release);
 
     return okResult({{"clicked", true}, {"x", x}, {"y", y},
                      {"widget", QString::fromUtf8(target->metaObject()->className())}});
@@ -676,7 +647,14 @@ QJsonObject InspectorServer::cmdFindAndClick(const QJsonObject &params)
         return errorResult("No root widget");
 
     QList<QObject*> stack;
-    stack.append(m_rootWidget.data());
+    QSet<QObject*> visited;
+    auto enqueue = [&](QObject *o) {
+        if (o && !visited.contains(o)) {
+            visited.insert(o);
+            stack.append(o);
+        }
+    };
+    enqueue(m_rootWidget.data());
 
     QObject *match = nullptr;
 
@@ -694,7 +672,7 @@ QJsonObject InspectorServer::cmdFindAndClick(const QJsonObject &params)
                     bool typeMatches = true;
                     if (!filterType.isEmpty()) {
                         QString className = QString::fromUtf8(obj->metaObject()->className());
-                        typeMatches = (className == filterType || className.endsWith(filterType));
+                        typeMatches = (className == filterType || className.contains(filterType));
                     }
                     if (typeMatches)
                         match = obj;
@@ -706,13 +684,13 @@ QJsonObject InspectorServer::cmdFindAndClick(const QJsonObject &params)
         QQuickItem *item = qobject_cast<QQuickItem*>(obj);
         if (item) {
             for (auto *child : item->childItems())
-                stack.append(child);
+                enqueue(child);
         }
         QQuickWidget *qw = qobject_cast<QQuickWidget*>(obj);
         if (qw && qw->rootObject())
-            stack.append(qw->rootObject());
+            enqueue(qw->rootObject());
         for (auto *child : obj->children())
-            stack.append(child);
+            enqueue(child);
     }
 
     if (!match)
@@ -748,17 +726,17 @@ QJsonObject InspectorServer::cmdListInteractive(const QJsonObject &params)
     QJsonArray results;
     QList<QObject*> stack;
     QSet<QObject*> visited;
-    stack.append(m_rootWidget.data());
+    auto enqueue = [&](QObject *o) {
+        if (o && !visited.contains(o)) {
+            visited.insert(o);
+            stack.append(o);
+        }
+    };
+    enqueue(m_rootWidget.data());
 
     while (!stack.isEmpty()) {
         QObject *obj = stack.takeFirst();
         if (!obj) continue;
-
-        // Since we're merging the scene and object trees, this is a
-        // BFS on an arbitrary graph (could even contain cycles!).
-        // Mark visited vertices to avoid problems.
-        if (visited.contains(obj)) continue;
-        visited.insert(obj);
 
         QString className = QString::fromUtf8(obj->metaObject()->className());
 
@@ -813,16 +791,70 @@ QJsonObject InspectorServer::cmdListInteractive(const QJsonObject &params)
         QQuickItem *item = qobject_cast<QQuickItem*>(obj);
         if (item) {
             for (auto *child : item->childItems())
-                stack.append(child);
+                enqueue(child);
         }
         QQuickWidget *qw = qobject_cast<QQuickWidget*>(obj);
         if (qw && qw->rootObject())
-            stack.append(qw->rootObject());
+            enqueue(qw->rootObject());
         for (auto *child : obj->children())
-            stack.append(child);
+            enqueue(child);
     }
 
     return okResult({{"elements", results}, {"count", results.size()}});
+}
+
+QJsonObject InspectorServer::cmdListFileDialogs(const QJsonObject &params) {
+    // There are many more dialog types, but we start with those to make
+    // life simpler.
+    static const QStringList fileDialogTypes = {
+        "QFileDialog", "QQuickFileDialog"
+    };
+
+    QWidgetList widgets = QApplication::topLevelWidgets();
+    QJsonArray dialogs;
+    for (QString dialogType : fileDialogTypes) {
+        for (QWidget *rootWidget : widgets) {
+            for(auto item : findByType(dialogType, rootWidget)) {
+                dialogs.append(item);
+            }
+        }
+    }
+    return okResult({{"dialogs", dialogs}});
+}
+
+QJsonObject InspectorServer::cmdFileDialogAction(const QJsonObject &params)
+{
+    QString objectId = params.value("objectId").toString();
+    QObject *obj = resolveObject(objectId);
+    if (!obj)
+        return errorResult("Object not found: " + objectId);
+
+    QFileDialog *fDialog = qobject_cast<QFileDialog*>(obj);
+    if (!fDialog && !obj->inherits("QQuickFileDialog")) {
+        return errorResult("Object is not a file dialog: " + objectId);
+    }
+
+    // Since QQuickFileDialog requires that anyway,
+    // just use invokeMethod all over for simplicity.
+    QString action = params.value("action").toString();
+    if (action == "accept") {
+        QMetaObject::invokeMethod(obj, "accept");
+    } else if (action == "cancel") {
+        QMetaObject::invokeMethod(obj, "reject");
+    } else if (action == "select") {
+        if (fDialog) {
+            fDialog->selectFile(params.value("path").toString());
+        } else {
+            QString fileUrl = "file://" + params.value("path").toString();
+            if (!obj->setProperty("selectedFile", QUrl(fileUrl))) {
+                qWarning() << "Failed to set selectedFile property on" << objectId;
+            }
+        }
+    } else {
+        return errorResult("Unknown action: " + action);
+    }
+
+    return okResult();
 }
 
 // --- Serialization ---
@@ -859,6 +891,30 @@ QJsonObject InspectorServer::serializeObject(QObject *obj, int maxDepth, int cur
             {"width", item->width()}, {"height", item->height()}
         };
         result["opacity"] = item->opacity();
+    }
+
+    // QDialog geometry.
+    QDialog *dialog = qobject_cast<QDialog*>(obj);
+    if (dialog) {
+        result["title"] = dialog->windowTitle();
+        result["visible"] = dialog->isVisible();
+        result["geometry"] = QJsonObject{
+            {"x", dialog->x()}, {"y", dialog->y()},
+            {"width", dialog->width()}, {"height", dialog->height()}
+        };
+    }
+
+    // QQuickFileDialog geometry.
+    // We need to resort to the metaobject protocol as QQuickDialog has no
+    // public C++ API. This is, of course, brittle, and might break with
+    // (minor) future versions releases of Qt.
+    // FIXME: this is getting pretty long, probably worth it to dismember this
+    //   into type-specific and keep the main traversal logic clean.
+    if (obj->inherits("QQuickAbstractDialog")) {
+        result["title"] = obj->property("title").toString();
+        result["visible"] = obj->property("visible").toBool();
+        // Geometry is painful cause QML uses its own "real" type - I don't even
+        // know if the coordinate system is the same as the rest - so TODO. :-)
     }
 
     // Include common identifying properties in tree nodes
@@ -1109,4 +1165,46 @@ QJsonObject InspectorServer::okResult(const QJsonObject &data)
     QJsonObject result = data;
     result["ok"] = true;
     return result;
+}
+
+QJsonArray InspectorServer::findByType(const QString &typeName, QWidget *root)
+{
+    // Collect all objects and filter by type
+    QJsonArray results;
+    QSet<QObject*> visited;
+    QList<QObject*> stack;
+    // cost proportional to tree size, not parent-chain multiplicity.
+    auto enqueue = [&](QObject *o) {
+        if (o && !visited.contains(o)) {
+            visited.insert(o);
+            stack.append(o);
+        }
+    };
+
+    stack.append(root);
+
+    while (!stack.isEmpty()) {
+        QObject *obj = stack.takeFirst();
+        if (!obj) continue;
+
+        QString className = QString::fromUtf8(obj->metaObject()->className());
+        // Match exact class name or a part of it (e.g., "Button" matches "QQuickButton" or
+        // "Button_QML_TYPE_XX")
+        if (className == typeName || className.contains(typeName)) {
+            results.append(serializeObject(obj, 0, 0));
+        }
+
+        QQuickItem *item = qobject_cast<QQuickItem*>(obj);
+        if (item) {
+            for (auto *child : item->childItems())
+                enqueue(child);
+        }
+        QQuickWidget *qw = qobject_cast<QQuickWidget*>(obj);
+        if (qw && qw->rootObject())
+            enqueue(qw->rootObject());
+        for (auto *child : obj->children())
+            enqueue(child);
+    }
+
+    return results;
 }
