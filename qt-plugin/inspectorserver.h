@@ -53,6 +53,8 @@ private:
     QJsonObject cmdEvaluate(const QJsonObject &params);
     QJsonObject cmdFindAndClick(const QJsonObject &params);
     QJsonObject cmdListInteractive(const QJsonObject &params);
+    QJsonObject cmdListFileDialogs(const QJsonObject &params);
+    QJsonObject cmdFileDialogAction(const QJsonObject &params);
 
     // Tree serialization
     QJsonObject serializeObject(QObject *obj, int maxDepth, int currentDepth = 0);
@@ -71,6 +73,7 @@ private:
     QJsonObject okResult(const QJsonObject &data = QJsonObject());
     bool isOk(const QJsonObject &obj);
     bool isError(const QJsonObject &obj);
+    QJsonArray findByType(const QString &typeName, QWidget * = nullptr);
 
     void sendResponse(QTcpSocket *socket, const QJsonObject &response);
 

@@ -316,6 +316,46 @@ const TOOLS = [
       },
     },
   },
+  {
+    name: "qml_list_file_dialogs",
+    description:
+      "Lists file dialogs currently present in the application. For each dialog returns its " +
+      "type, id, objectName, visibility, and children. Note that some dialog types may be " +
+      "listed even while they are not visible/active. " +
+      "Workflow note: due to Qt limitations, the file selection often cannot be changed once a " +
+      "dialog is active. To select a file, call `file_dialog_actions` with action `select` BEFORE " +
+      "performing the step that opens the dialog (e.g. clicking the button that triggers it), not after.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "qml_file_dialog_action",
+    description:
+      "Interacts with an existing file dialog.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        objectId: {
+          type: "string",
+          description:
+            "ID of the dialog object to interact with."
+        },
+        action: {
+          type: "string",
+          enum: ["accept", "cancel", "select"],
+          description: "Action to perform on the dialog. 'accept' confirms the selection, 'cancel' dismisses the dialog, " +
+            "'select' selects a file/directory (requires a path to be provided)."
+        },
+        path: {
+          type: "string",
+          description: "Path to select (for 'select' action)."
+        }
+      },
+      required: ["objectId", "action"]
+    }
+  }
 ];
 
 // ---- Handlers ----
@@ -341,6 +381,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     qml_evaluate: "evaluate",
     qml_find_and_click: "findAndClick",
     qml_list_interactive: "listInteractive",
+    qml_list_file_dialogs: "listFileDialogs",
+    qml_file_dialog_action: "fileDialogAction",
   };
 
   const command = commandMap[name];
