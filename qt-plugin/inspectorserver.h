@@ -71,6 +71,8 @@ private:
     QWidget* findWidgetAt(int x, int y);
     QJsonObject errorResult(const QString &msg);
     QJsonObject okResult(const QJsonObject &data = QJsonObject());
+    bool isOk(const QJsonObject &obj);
+    bool isError(const QJsonObject &obj);
     QJsonArray findByType(const QString &typeName, QWidget * = nullptr);
 
     void sendResponse(QTcpSocket *socket, const QJsonObject &response);
